@@ -44,10 +44,7 @@ envoy_wasm_cc_binary(
     srcs = ["envoy_filter_http_wasm_updated_example.cc"],
 )
 
-envoy_wasm_cc_binary(
-    name = "envoy_filter_http_wasm_modsecurity.wasm",
-    srcs = ["envoy_filter_http_wasm_modsecurity.cc", "utils.cc", "utils.h"],
-    deps = [
-        "@modsecurity//:lib",
-    ],
+filegroup(
+    name = "files",
+    srcs = glob(["**/*"]),
 )
