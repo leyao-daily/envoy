@@ -50,7 +50,6 @@ static_resources:
                     local:
                       filename: "lib/envoy_filter_http_wasm_modsecurity.wasm"
           - name: envoy.filters.http.router
-            typed_config: {}
 
   clusters:
   - name: web_service
