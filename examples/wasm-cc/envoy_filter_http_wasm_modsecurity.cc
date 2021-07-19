@@ -3,9 +3,11 @@
 #include <string_view>
 #include <unordered_map>
 
+//#include "common/http/utility.h"
 #include "modsecurity/modsecurity.h"
 #include "modsecurity/rules_set.h"
 #include "proxy_wasm_intrinsics.h"
+//#include "extensions/common/wasm/ext/envoy_proxy_wasm_api.h"
 
 #include "utils.h"
 
@@ -59,6 +61,7 @@ private:
   std::shared_ptr<modsecurity::Transaction> modsec_transaction_;
 
   FilterHeadersStatus getRequestHeadersStatus();
+  FilterHeadersStatus getResponseHeadersStatus();
 
   /**
    * @return true if intervention of current transaction is disruptive, false otherwise
@@ -161,17 +164,23 @@ FilterHeadersStatus ExampleContext::onRequestHeaders(uint32_t /* headers */, boo
     modsec_transaction_->addRequestHeader(std::string(p.first), std::string(p.second));
   }
   modsec_transaction_->processRequestHeaders();
+  LOG_INFO(std::string("modsecurity process request header"));
   if (end_of_stream) {
+    LOG_INFO(std::string("request processed"));
     status_.request_processed = true;
   }
   if (intervention()) {
+    LOG_INFO(std::string("stop iteration"));
     return FilterHeadersStatus::StopIteration;
   }
-
-  return getRequestHeadersStatus();
+  LOG_INFO(std::string("continue"));
+  return FilterHeadersStatus::Continue;
 }
 
 FilterHeadersStatus ExampleContext::onResponseHeaders(uint32_t /* headers */, bool /* end_of_stream */) {
+  if (status_.intervined || status_.response_processed) {
+    return getResponseHeadersStatus();
+  }
   LOG_DEBUG(std::string("onResponseHeaders ") + std::to_string(id()));
   auto result = getResponseHeaderPairs();
   auto pairs = result->pairs();
@@ -189,13 +198,15 @@ FilterHeadersStatus ExampleContext::onResponseHeaders(uint32_t /* headers */, bo
 FilterDataStatus ExampleContext::onRequestBody(size_t body_buffer_length,
                                                bool /* end_of_stream */) {
   auto body = getBufferBytes(WasmBufferType::HttpRequestBody, 0, body_buffer_length);
-  LOG_ERROR(std::string("onRequestBody ") + std::string(body->view()));
+  LOG_INFO(std::string(body->view()));
   return FilterDataStatus::Continue;
 }
 
-FilterDataStatus ExampleContext::onResponseBody(size_t /* body_buffer_length */,
+FilterDataStatus ExampleContext::onResponseBody(size_t body_buffer_length,
                                                 bool /* end_of_stream */) {
-  setBuffer(WasmBufferType::HttpResponseBody, 0, 12, "Hello, world");
+  auto body = getBufferBytes(WasmBufferType::HttpResponseBody, 0, body_buffer_length);
+  //setBuffer(WasmBufferType::HttpResponseBody, 0, 12, "Hello, world");
+  LOG_INFO(std::string("onReponseBody ") + std::string(body->view()));
   return FilterDataStatus::Continue;
 }
 
@@ -226,6 +237,14 @@ bool ExampleContext::intervention() {
         // status_.intervined must be set to true before sendLocalReply to avoid reentrancy when encoding the reply
         status_.intervined = true;
         LOG_DEBUG("intervention");
+        /*
+        inline WasmResult sendLocalResponse(uint32_t response_code, std::string_view response_code_details,
+                                    std::string_view body,
+                                    const HeaderStringPairs &additional_response_headers,
+                                    GrpcStatus grpc_status = GrpcStatus::InvalidCode) {
+        */
+        std::vector<std::pair<std::string, std::string>> pairs;
+        sendLocalResponse(modsec_transaction_->m_it.status, "", "", pairs);
     }
     return status_.intervined;
 }
@@ -245,3 +264,13 @@ FilterHeadersStatus ExampleContext::getRequestHeadersStatus() {
                 FilterHeadersStatus::StopIteration : FilterHeadersStatus::Continue;
 }
 
+FilterHeadersStatus ExampleContext::getResponseHeadersStatus() {
+    if (status_.intervined || status_.response_processed) {
+        LOG_DEBUG("Continue");
+        return FilterHeadersStatus::Continue;
+    }
+    // If disruptive, hold until status_.response_processed, otherwise let the data flow.
+    LOG_DEBUG("RuleEngine");
+    return modsec_transaction_->getRuleEngineState() == modsecurity::RulesSetProperties::EnabledRuleEngine ?
+                FilterHeadersStatus::StopIteration : FilterHeadersStatus::Continue;
+}
