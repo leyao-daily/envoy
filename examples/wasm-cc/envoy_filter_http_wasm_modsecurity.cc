@@ -62,6 +62,8 @@ private:
 
   FilterHeadersStatus getRequestHeadersStatus();
   FilterHeadersStatus getResponseHeadersStatus();
+  FilterDataStatus getRequestStatus();
+  FilterDataStatus getResponseStatus();
 
   /**
    * @return true if intervention of current transaction is disruptive, false otherwise
@@ -112,7 +114,7 @@ void ExampleContext::onCreate() {
   modsec_rules_.reset(new modsecurity::RulesSet());
   if (!rules_inline().empty()) {
       int rulesLoaded = modsec_rules_->load(rules_inline().c_str());
-      LOG_DEBUG("Loading ModSecurity inline rules");
+      LOG_INFO("Loading ModSecurity inline rules");
       if (rulesLoaded == -1) {
           LOG_ERROR(std::string("Failed to load rules"));
       } else {
@@ -123,9 +125,9 @@ void ExampleContext::onCreate() {
 }
 
 FilterHeadersStatus ExampleContext::onRequestHeaders(uint32_t /* headers */, bool end_of_stream) {
-  LOG_DEBUG(std::string("onRequestHeaders ") + std::to_string(id()));
+  LOG_INFO(std::string("onRequestHeaders ") + std::to_string(id()));
   if (status_.intervined || status_.request_processed) {
-    LOG_DEBUG("Processed");
+    LOG_INFO("Processed");
     return getRequestHeadersStatus();
   }
 
@@ -177,29 +179,75 @@ FilterHeadersStatus ExampleContext::onRequestHeaders(uint32_t /* headers */, boo
   return FilterHeadersStatus::Continue;
 }
 
-FilterHeadersStatus ExampleContext::onResponseHeaders(uint32_t /* headers */, bool /* end_of_stream */) {
+FilterHeadersStatus ExampleContext::onResponseHeaders(uint32_t /* headers */, bool end_of_stream) {
   if (status_.intervined || status_.response_processed) {
     return getResponseHeadersStatus();
   }
-  LOG_DEBUG(std::string("onResponseHeaders ") + std::to_string(id()));
-  auto result = getResponseHeaderPairs();
-  auto pairs = result->pairs();
-  LOG_INFO(std::string("headers: ") + std::to_string(pairs.size()));
+
+  auto headers = getResponseHeaderPairs();
+  auto pairs = headers->pairs();
   for (auto& p : pairs) {
     LOG_INFO(std::string(p.first) + std::string(" -> ") + std::string(p.second));
+    modsec_transaction_->addResponseHeader(std::string(p.first), std::string(p.second));
   }
+  int response_code;
+  std::string protocol;
+  getValue({"response", "code"}, &response_code);
+  getValue({"request", "protocol"}, &protocol);
+  // TODO(luyao): get response protocol
+  LOG_INFO("modsecurity processResponseHeaders start");
+  modsec_transaction_->processResponseHeaders(response_code, protocol.c_str());
+  LOG_INFO("modsecurity processResponseHeaders done");
 
-  addResponseHeader("X-Wasm-custom", "FOO");
-  replaceResponseHeader("content-type", "text/plain; charset=utf-8");
-  removeResponseHeader("content-length");
-  return FilterHeadersStatus::Continue;
+  if (end_of_stream) {
+    LOG_INFO(std::string("response processed"));
+    status_.response_processed = true;
+  }
+  if (intervention()) {
+      LOG_INFO(std::string("stop iteration"));
+      return FilterHeadersStatus::StopIteration;
+  }
+  LOG_INFO(std::string("getResponseHeadersStatus"));
+  return getResponseHeadersStatus();
 }
 
 FilterDataStatus ExampleContext::onRequestBody(size_t body_buffer_length,
-                                               bool /* end_of_stream */) {
+                                               bool end_of_stream) {
+
+  LOG_INFO("ModSecurityFilter::decodeData");
+  if (status_.intervined || status_.request_processed) {
+      LOG_INFO("Processed");
+      return getRequestStatus();
+  }
   auto body = getBufferBytes(WasmBufferType::HttpRequestBody, 0, body_buffer_length);
   LOG_INFO(std::string(body->view()));
-  return FilterDataStatus::Continue;
+  /*
+  for (const Buffer::RawSlice& slice : data.getRawSlices()) {
+      size_t requestLen = modsec_transaction_->getRequestBodyLength();
+      // If append fails or append reached the limit, test for intervention (in case SecRequestBodyLimitAction is set to Reject)
+      // Note, we can't rely solely on the return value of append, when SecRequestBodyLimitAction is set to Reject it returns true and sets the intervention
+      if (modsec_transaction_->appendRequestBody(static_cast<unsigned char*>(slice.mem_), slice.len_) == false ||
+          (slice.len_ > 0 && requestLen == modsec_transaction_->getRequestBodyLength())) {
+          ENVOY_LOG(info, "ModSecurityFilter::decodeData appendRequestBody reached limit");
+          if (intervention()) {
+              return Http::FilterDataStatus::StopIterationNoBuffer;
+          }
+          // Otherwise set to process request
+          end_of_stream = true;
+          break;
+      }
+  }
+ */
+  if (end_of_stream) {
+      LOG_INFO(std::string("request processed"));
+      status_.request_processed = true;
+      modsec_transaction_->processRequestBody();
+  }
+  if (intervention()) {
+      return FilterDataStatus::StopIterationNoBuffer;
+  }
+  return getRequestStatus();
+
 }
 
 FilterDataStatus ExampleContext::onResponseBody(size_t body_buffer_length,
@@ -236,7 +284,7 @@ bool ExampleContext::intervention() {
     if (!status_.intervined && modsec_transaction_->m_it.disruptive) {
         // status_.intervined must be set to true before sendLocalReply to avoid reentrancy when encoding the reply
         status_.intervined = true;
-        LOG_DEBUG("intervention");
+        LOG_INFO("intervention");
         /*
         inline WasmResult sendLocalResponse(uint32_t response_code, std::string_view response_code_details,
                                     std::string_view body,
@@ -244,6 +292,9 @@ bool ExampleContext::intervention() {
                                     GrpcStatus grpc_status = GrpcStatus::InvalidCode) {
         */
         std::vector<std::pair<std::string, std::string>> pairs;
+        if (modsec_transaction_->m_it.status == 302) {
+          pairs.push_back(std::make_pair(std::string("location"), std::string(modsec_transaction_->m_it.url)));
+        }
         sendLocalResponse(modsec_transaction_->m_it.status, "", "", pairs);
     }
     return status_.intervined;
@@ -251,26 +302,55 @@ bool ExampleContext::intervention() {
 
 FilterHeadersStatus ExampleContext::getRequestHeadersStatus() {
     if (status_.intervined) {
-        LOG_DEBUG("StopIteration");
+        LOG_INFO("StopIteration");
         return FilterHeadersStatus::StopIteration;
     }
     if (status_.request_processed) {
-        LOG_DEBUG("Continue");
+        LOG_INFO("Continue");
         return FilterHeadersStatus::Continue;
     }
     // If disruptive, hold until status_.request_processed, otherwise let the data flow.
-    LOG_DEBUG("RuleEngine");
+    LOG_INFO("RuleEngine");
     return modsec_transaction_->getRuleEngineState() == modsecurity::RulesSetProperties::EnabledRuleEngine ?
                 FilterHeadersStatus::StopIteration : FilterHeadersStatus::Continue;
 }
 
 FilterHeadersStatus ExampleContext::getResponseHeadersStatus() {
-    if (status_.intervined || status_.response_processed) {
-        LOG_DEBUG("Continue");
-        return FilterHeadersStatus::Continue;
-    }
-    // If disruptive, hold until status_.response_processed, otherwise let the data flow.
-    LOG_DEBUG("RuleEngine");
-    return modsec_transaction_->getRuleEngineState() == modsecurity::RulesSetProperties::EnabledRuleEngine ?
-                FilterHeadersStatus::StopIteration : FilterHeadersStatus::Continue;
+  if (status_.intervined || status_.response_processed) {
+      LOG_INFO("Continue");
+      return FilterHeadersStatus::Continue;
+  }
+  // If disruptive, hold until status_.response_processed, otherwise let the data flow.
+  LOG_INFO("RuleEngine");
+  return modsec_transaction_->getRuleEngineState() == modsecurity::RulesSetProperties::EnabledRuleEngine ?
+              FilterHeadersStatus::StopIteration : FilterHeadersStatus::Continue;
+}
+
+FilterDataStatus ExampleContext::getRequestStatus() {
+  if (status_.intervined) {
+      LOG_INFO("StopIterationNoBuffer");
+      return FilterDataStatus::StopIterationNoBuffer;
+  }
+  if (status_.request_processed) {
+      LOG_INFO("Continue");
+      return FilterDataStatus::Continue;
+  }
+  // If disruptive, hold until status_.request_processed, otherwise let the data flow.
+  LOG_INFO("RuleEngine");
+  return modsec_transaction_->getRuleEngineState() == modsecurity::RulesSetProperties::EnabledRuleEngine ?
+              FilterDataStatus::StopIterationAndBuffer :
+              FilterDataStatus::Continue;
+}
+
+FilterDataStatus ExampleContext::getResponseStatus() {
+  if (status_.intervined || status_.response_processed) {
+      // If intervined, let encodeData return the localReply
+      LOG_INFO("Continue");
+      return FilterDataStatus::Continue;
+  }
+  // If disruptive, hold until status_.response_processed, otherwise let the data flow.
+  LOG_INFO("RuleEngine");
+  return modsec_transaction_->getRuleEngineState() == modsecurity::RulesSetProperties::EnabledRuleEngine ?
+              FilterDataStatus::StopIterationAndBuffer :
+              FilterDataStatus::Continue;
 }
