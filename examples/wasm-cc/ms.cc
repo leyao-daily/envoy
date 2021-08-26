@@ -8,7 +8,6 @@
 
 //#include "common/http/utility.h"
 #include "modsecurity/modsecurity.h"
-#include "examples/wasm-cc/app_config.pb.h"
 #include "modsecurity/rules_set.h"
 #include "modsecurity/rule_message.h"
 #include "proxy_wasm_intrinsics.h"
@@ -36,10 +35,12 @@ public:
   std::shared_ptr<modsecurity::RulesSet> modsec_rules() const { return modsec_rules_; }
 
   std::string configuration() { return configuration_; };
+  std::string rules_service() { return rules_service_; };
 
 private:
   // rules config data from root context configurations
   std::string rules_inline_;
+  std::string rules_service_;
 
   // share modsecurity obj
   std::shared_ptr<modsecurity::ModSecurity> modsec_;
@@ -116,17 +117,15 @@ void ExampleRootContext::onTick() {
     getContext(context_id)->setEffectiveContext();
     auto body = getBufferBytes(WasmBufferType::HttpCallResponseBody, 0, body_size);
     auto response_trailers = getHeaderMapPairs(WasmHeaderMapType::HttpCallResponseTrailers);
-    logInfo("Body begin  ===================================== :");
     auto result = std::string(body->view());
     rules_inline_ = result;
     logInfo(this->rules_inline_);
-    logInfo("Body end  ===================================== :");
   };
 
-  if (httpCall("rule_service", {{":method", "GET"}, {":path", "/"}, {":authority", "foo"}},
+  if (httpCall(rules_service_, {{":method", "GET"}, {":path", "/"}, {":authority", "foo"}},
                          "hello world", {{"trail", "cow"}}, 1000, callback) == WasmResult::Ok) {
-      logInfo("++++++++!!!!!!!!!!++++++++++++++");
-    }
+    logInfo("Successfully update the ModSecurity rules");
+  }
 
   /* load updated rules */
   modsec_.reset(new modsecurity::ModSecurity());
@@ -156,12 +155,11 @@ bool ExampleRootContext::onConfigure(size_t configuration_size) {
   auto configuration_data = getBufferBytes(WasmBufferType::PluginConfiguration, 0, configuration_size);
   configuration_ = configuration_data->toString();
   //rules_inline_ = configuration_;
-  using AppConfig = envoy::examples::AppConfig;
-  auto con = configuration_data->proto<AppConfig>();
-  printf("Rule <%s>\n", con.rule_service().c_str());
-  proxy_set_tick_period_milliseconds(con.duration_time());
-  // LOG_INFO(std::string("onConfigure load configurations: ") + rules_inline_);
-  printf("Duration <%d>\n", con.duration_time());
+  auto res =  mappify(configuration_);
+  proxy_set_tick_period_milliseconds(std::stoi(res["duration_time"]));
+  rules_service_ = res["rules_service"];
+  
+  LOG_INFO(std::string("onConfigure load configurations: ") + rules_inline_);
   /* modsecurity initializing */
   modsec_.reset(new modsecurity::ModSecurity());
   modsec_->setConnectorInformation("ModSecurity-envoy v3.0.4 (ModSecurity)");

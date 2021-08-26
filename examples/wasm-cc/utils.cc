@@ -18,3 +18,28 @@ std::vector<std::string> split(const std::string& str, const std::string& delim)
 	}
 	return res;
 }
+
+std::map<std::string, std::string> mappify(std::string const& s)
+{
+    std::map<std::string, std::string> res;
+
+    std::string::size_type key_pos = 0;
+    std::string::size_type key_end;
+    std::string::size_type val_pos;
+    std::string::size_type val_end;
+
+    while((key_end = s.find(':', key_pos)) != std::string::npos)
+    {
+        if((val_pos = s.find_first_not_of(": ", key_end)) == std::string::npos)
+            break;
+
+        val_end = s.find('\n', val_pos);
+        res.emplace(s.substr(key_pos, key_end - key_pos), s.substr(val_pos, val_end - val_pos));
+
+        key_pos = val_end;
+        if(key_pos != std::string::npos)
+            ++key_pos;
+    }
+
+    return res;
+}
