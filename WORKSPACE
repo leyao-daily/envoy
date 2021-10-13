@@ -14,23 +14,16 @@ pkg_config(
     name = "modsecurity",
     ignore_opts = [
         "-lmodsecurity",
-<<<<<<< HEAD
         "-lGeoIP",
         "-lcurl",
         "-lxml2",
         "-lpcre",
         "-lyajl"
-=======
         "-lpcre",
->>>>>>> Update the filter two version
     ],
     min_version = "3.0.4"
 )
 
-<<<<<<< HEAD
-
-=======
->>>>>>> Update the filter two version
 load("//bazel:api_binding.bzl", "envoy_api_binding")
 
 envoy_api_binding()
