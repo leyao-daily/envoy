@@ -209,9 +209,9 @@ envoy.gpg.identity==0.0.2 \
 envoy.gpg.sign==0.0.3 \
     --hash=sha256:31667931f5d7ff05fd809b89748f277511486311c777652af4cb8889bd641049
     # via -r tools/distribution/requirements.txt
-frozendict==2.0.6 \
-    --hash=sha256:3f00de72805cf4c9e81b334f3f04809278b967d2fed84552313a0fcce511beb1 \
-    --hash=sha256:5d3f75832c35d4df041f0e19c268964cbef29c1eb34cd3517cf883f1c2d089b9
+frozendict==2.1.3 \
+    --hash=sha256:cfa47860932d549947157d68f246898f60b05da392f67219a913b85d8c36b1b2 \
+    --hash=sha256:7a12336ba271066e1261a70d8ba97d5178392f3b317b31c6686e401423e70670
     # via envoy.base.runner
 gidgethub==5.0.1 \
     --hash=sha256:3efbd6998600254ec7a2869318bd3ffde38edc3a0d37be0c14bc46b45947b682 \
