@@ -7,8 +7,9 @@
 abstracts==0.0.12 \
     --hash=sha256:acc01ff56c8a05fb88150dff62e295f9071fc33388c42f1dfc2787a8d1c755ff
     # via aio.functional
-aio.functional==0.0.9 \
-    --hash=sha256:824a997a394ad891bc9f403426babc13c9d0d1f4d1708c38e77d6aecae1cab1d
+aio.functional==0.0.10 \
+    --hash=sha256:20d3bda56196cd6916eca97965d818f61ca37f98ec9f4d23545802a180362813 \
+    --hash=sha256:9d456f0c2382968aacd62cccc2b815a25fd55f53c2c6223d6e587efeb8bc2622
     # via -r tools/base/requirements.txt
 colorama==0.4.4 \
     --hash=sha256:5941b2b48a20143d2267e95b1c2a7603ce057ee39fd88e7329b0c292aa16869b \
