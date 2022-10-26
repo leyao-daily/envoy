@@ -1,4 +1,4 @@
-FROM python:3.10.5-slim-bullseye@sha256:298c9915def292fb619a1c402e83e204aec41e56474411fdb0d198c65f235a0f
+FROM python:3.11.0-slim-bullseye@sha256:f8cc89f5e47347703ec0c2b755464d7db2fa16f255ab860c4b24ba6ef2402020
 
 ADD requirements.txt /tmp/flask-requirements.txt
 RUN pip3 install -qr /tmp/flask-requirements.txt
